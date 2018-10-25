@@ -8,7 +8,6 @@
 #include <atomic>
 #include <mpi.h>
 #include <map>
-#include <time.h> //Para generar un numero random para el broadcast
 
 int total_nodes, mpi_rank;
 Block *last_block_in_chain;
@@ -90,6 +89,7 @@ bool validate_block_for_chain(const Block *rBlock, const MPI_Status *status){
 //Envia el bloque minado a todos los nodos
 void broadcast_block(const Block *block){
   //No enviar a mí mismo
+  //TODO: Completar
   MPI_Request requests[total_nodes-1];
   MPI_Status status[total_nodes-1];
 
@@ -97,7 +97,7 @@ void broadcast_block(const Block *block){
   int destino = rand();
   int j = 0; //Uso j para recorrer los requests
 
-  //Envio bloques
+  //Envio bloque
   for(int i=0; i<total_nodes; i++){
     destino = destino % total_nodes;
     if(destino != mpi_rank){ //Me fijo que no me lo este mandando a mi mismo
@@ -176,17 +176,56 @@ int node(){
   memset(last_block_in_chain->previous_block_hash,0,HASH_SIZE);
 
   //TODO: Crear thread para minar
+  int rc;
+  pthread_attr_t attr;
+  pthread_t thread;
+
+  pthread_attr_init(&attr);
+  pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+
+  rc = pthread_create(&thread, &attr, proof_of_work, NULL);
+  if(rc){
+    printf("ERROR; return code from pthread_create() is %d\n", rc);
+    exit(-1);
+  }
+
+  //Esto lo creo para el mensaje entrante
+  int flag;
+  Block new_block;
+  MPI_Request request;
+  MPI_Status status;
 
   while(true){
 
       //TODO: Recibir mensajes de otros nodos
 
-      //TODO: Si es un mensaje de nuevo bloque, llamar a la función
-      // validate_block_for_chain con el bloque recibido y el estado de MPI
+      //Antes de esto faltaria chequear que no se este enviando ningun bloque nuevo
+      MPI_Irecv(&new_block, 1, *MPI_BLOCK, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &request);
+      MPI_Test(&request, &flag, &status);
 
-      //TODO: Si es un mensaje de pedido de cadena,
-      //responderlo enviando los bloques correspondientes
+      if(flag != 0 && status.MPI_SOURCE != mpi_rank){
 
+        //TODO: Si es un mensaje de nuevo bloque, llamar a la función
+        //validate_block_for_chain con el bloque recibido y el estado de MPI
+        if(status.MPI_TAG == TAG_NEW_BLOCK){
+          const Block rBlock = new_block;
+          validate_block_for_chain(&rBlock, &status);
+        }
+
+        //TODO: Si es un mensaje de pedido de cadena,
+        //responderlo enviando los bloques correspondientes
+        else if(status.MPI_TAG == TAG_CHAIN_HASH){
+          //completar
+        }
+      }
+  }
+
+  pthread_attr_destroy(&attr);
+
+  rc = pthread_join(thread, nullptr);
+  if(rc){
+    printf("ERROR; return code from pthread_join() is %d\n", rc);
+    exit(-1);
   }
 
   delete last_block_in_chain;

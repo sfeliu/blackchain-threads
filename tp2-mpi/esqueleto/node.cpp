@@ -8,6 +8,7 @@
 #include <atomic>
 #include <mpi.h>
 #include <map>
+#include <time.h> //Para generar un numero random para el broadcast
 
 int total_nodes, mpi_rank;
 Block *last_block_in_chain;
@@ -89,7 +90,25 @@ bool validate_block_for_chain(const Block *rBlock, const MPI_Status *status){
 //Envia el bloque minado a todos los nodos
 void broadcast_block(const Block *block){
   //No enviar a mí mismo
-  //TODO: Completar
+  MPI_Request requests[total_nodes-1];
+  MPI_Status status[total_nodes-1];
+
+  srand(time(NULL));
+  int destino = rand();
+  int j = 0; //Uso j para recorrer los requests
+
+  //Envio bloques
+  for(int i=0; i<total_nodes; i++){
+    destino = destino % total_nodes;
+    if(destino != mpi_rank){ //Me fijo que no me lo este mandando a mi mismo
+      MPI_Isend((void *)block, 1, *MPI_BLOCK, destino, TAG_NEW_BLOCK, MPI_COMM_WORLD, &requests[j]);
+      cout << mpi_rank << " envio bloque a " << destino << endl;
+      j++;
+    }
+    destino++;
+  }
+  //Espero a que todos reciban para poder continuar
+  MPI_Waitall(total_nodes-1, requests, status);
 }
 
 //Proof of work

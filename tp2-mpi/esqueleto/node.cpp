@@ -22,21 +22,72 @@ pthread_mutex_t usando_last_block = PTHREAD_MUTEX_INITIALIZER;
 //Cuando me llega una cadena adelantada, y tengo que pedir los nodos que me faltan
 //Si nos separan más de VALIDATION_BLOCKS bloques de distancia entre las cadenas, se descarta por seguridad
 bool verificar_y_migrar_cadena(const Block *rBlock, const MPI_Status *status){
+    MPI_Request request;
+    MPI_Status local_status;
+    
+    //TODO: Enviar mensaje TAG_CHAIN_HASH
+    MPI_Isend((void *)rBlock->block_hash,
+              HASH_SIZE,
+              MPI_CHAR,
+              status->MPI_SOURCE,
+              TAG_CHAIN_HASH,
+              MPI_COMM_WORLD,
+              &request);
+    
+    MPI_Wait(&request, &local_status);
 
-  //TODO: Enviar mensaje TAG_CHAIN_HASH
+    Block *blockchain = new Block[VALIDATION_BLOCKS];
 
-  Block *blockchain = new Block[VALIDATION_BLOCKS];
+    //TODO: Recibir mensaje TAG_CHAIN_RESPONSE
+    MPI_Recv((void *) blockchain,
+             VALIDATION_BLOCKS,
+             *MPI_BLOCK,
+             status->MPI_SOURCE,
+             TAG_CHAIN_RESPONSE,
+             MPI_COMM_WORLD,
+             &local_status);
+    int bloques_recividos;
+    MPI_Get_count(&local_status, *MPI_BLOCK, &bloques_recividos);
+    
+    //TODO: Verificar que los bloques recibidos
+    //sean válidos y se puedan acoplar a la cadena
+    // Chequeo que el primero el el rBlock (esto no me queda claro del enunciado, preguntar!)
+    if (strncmp(blockchain[0].block_hash, rBlock->block_hash, HASH_SIZE) != 0) {
+        cout << "El primer bloque enviado no es el original, ignorar la cadena recivida" << endl;
+        delete []blockchain;
+        return false;
+    }
 
-  //TODO: Recibir mensaje TAG_CHAIN_RESPONSE
+    if (blockchain[0].index != rBlock->index) {
+        cout << "El índice del primer bloque no coincide con el esperado" << endl;
+        delete []blockchain;
+        return false;
+    }
+    
+    // Verifico que el hash del primer elemento de la cadena es correcto
+    string hash_result;
+    block_to_hash(&blockchain[0], hash_result); // porque devolver una string en vez de un char[HASH_SIZE]?
+    if (hash_result.compare(0, string::npos, blockchain[0].block_hash, HASH_SIZE) != 0) {
+        cout << "El hash del primer bloque no es correcto" << endl;
+    }
 
-  //TODO: Verificar que los bloques recibidos
-  //sean válidos y se puedan acoplar a la cadena
-    //delete []blockchain;
-    //return true;
-
-
-  delete []blockchain;
-  return false;
+    for (int i = 1; i < bloques_recividos; i++) {
+        if (strncmp(blockchain[i].block_hash, blockchain[i-1].previous_block_hash, HASH_SIZE) != 0) {
+            cout << "El previous_hash del nodo " << i << "no es igual al hash_block del nodo " << i-1;
+            cout << "La cadena recivida esta rota, la ignoro" << endl;
+            delete []blockchain;
+            return false;
+        }
+        
+        if (blockchain[i-1].index + 1 != blockchain[i].index) {
+            cout << "Indices incorrectos en la cadena recivida" << endl;
+            delete []blockchain;
+            return false;
+        }
+    }
+    
+    delete []blockchain;
+    return true;
 }
 
 //Verifica que el bloque tenga que ser incluido en la cadena, y lo agrega si corresponde
@@ -175,11 +226,10 @@ void* proof_of_work(void *ptr){
     Block block;
     unsigned int mined_blocks = 0;
     while(true){
-        // Intento evitar que alguien me cambie el last_block
-        // antes de mientras lo copio
+        // No quiero que el otro thread cambie last_block_in_chain mientras intento crear un nuevo bloque que apunta a el?
+        // quizás esto bloquea demasiado?
       pthread_mutex_lock(&usando_last_block);
       block = *last_block_in_chain;
-      pthread_mutex_unlock(&usando_last_block);
 
       //Preparar nuevo bloque
       block.index += 1;
@@ -209,6 +259,7 @@ void* proof_of_work(void *ptr){
             broadcast_block(last_block_in_chain);
           }
       }
+      pthread_mutex_unlock(&usando_last_block);
     }
 
     return NULL;

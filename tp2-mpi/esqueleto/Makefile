@@ -12,7 +12,7 @@ BIN= blockchain
 
 all: blockchain
 
-$(BIN): $(SRCS)
+$(BIN): $(SRCS) block.h
 	$(MPICC) $(CFLAGS) -o $(BIN) $(SRCS)
 
 clean:

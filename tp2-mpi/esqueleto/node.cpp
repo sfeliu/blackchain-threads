@@ -14,10 +14,10 @@ Block *last_block_in_chain;
 map<string,Block> node_blocks;
 
 // Lockear este mutes cuando se quiere enviar un bloque nuevo
-// Intentar Unlockear este mutex cuando se necesita procesar un bloque recivido
+// Intentar Unlockear este mutex cuando se necesita procesar un bloque recibido
 // No se me ocurrió un mejor nombre para este mutex...
-pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t usando_last_block = PTHREAD_MUTEX_INITIALIZER;
+//pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+//pthread_mutex_t usando_last_block = PTHREAD_MUTEX_INITIALIZER;
 
 //Cuando me llega una cadena adelantada, y tengo que pedir los nodos que me faltan
 //Si nos separan más de VALIDATION_BLOCKS bloques de distancia entre las cadenas, se descarta por seguridad
@@ -46,14 +46,14 @@ bool verificar_y_migrar_cadena(const Block *rBlock, const MPI_Status *status){
              TAG_CHAIN_RESPONSE,
              MPI_COMM_WORLD,
              &local_status);
-    int bloques_recividos;
-    MPI_Get_count(&local_status, *MPI_BLOCK, &bloques_recividos);
+    int bloques_recibidos;
+    MPI_Get_count(&local_status, *MPI_BLOCK, &bloques_recibidos);
     
     //TODO: Verificar que los bloques recibidos
     //sean válidos y se puedan acoplar a la cadena
-    // Chequeo que el primero el el rBlock (esto no me queda claro del enunciado, preguntar!)
+    // Verifico que el primero en lacadena recibida es el rBlock (esto no me queda claro del enunciado, preguntar!)
     if (strncmp(blockchain[0].block_hash, rBlock->block_hash, HASH_SIZE) != 0) {
-        cout << "El primer bloque enviado no es el original, ignorar la cadena recivida" << endl;
+        cout << "El primer bloque enviado no es el original, ignorar la cadena recibida" << endl;
         delete []blockchain;
         return false;
     }
@@ -71,30 +71,50 @@ bool verificar_y_migrar_cadena(const Block *rBlock, const MPI_Status *status){
         cout << "El hash del primer bloque no es correcto" << endl;
     }
 
-    for (int i = 1; i < bloques_recividos; i++) {
+    for (int i = 1; i < bloques_recibidos; i++) {
         if (strncmp(blockchain[i].block_hash, blockchain[i-1].previous_block_hash, HASH_SIZE) != 0) {
             cout << "El previous_hash del nodo " << i << "no es igual al hash_block del nodo " << i-1;
-            cout << "La cadena recivida esta rota, la ignoro" << endl;
+            cout << "La cadena recibida esta rota, la ignoro" << endl;
             delete []blockchain;
             return false;
         }
         
-        if (blockchain[i-1].index + 1 != blockchain[i].index) {
-            cout << "Indices incorrectos en la cadena recivida" << endl;
+        if (blockchain[i-1].index-1 != blockchain[i].index) {
+            cout << "Indices incorrectos en la cadena recibida" << endl;
             delete []blockchain;
             return false;
         }
+
+        if (node_blocks.count(string(blockchain[i].block_hash, HASH_SIZE)) != 0) {
+            // Acepto la cadena
+            *last_block_in_chain = *rBlock;
+            for (int j = 1; j < i; j++) {
+                node_blocks[string(blockchain[j].block_hash, HASH_SIZE)] = blockchain[j];
+            }
+            
+            delete []blockchain;
+            return true;
+        }
+
+    }
+
+    // La cadena no tiene errores, pero no se pudieron encontrar bloques en node_blocks.
+    // Si el último bloque de la cadena recibida es de index 1, la acepto, si no, la descarto
+    if (blockchain[bloques_recibidos-1].index == 1) {
+        *last_block_in_chain = *rBlock;
+        delete []blockchain;
+        return true;
     }
     
     delete []blockchain;
-    return true;
+    return false;
 }
 
 //Verifica que el bloque tenga que ser incluido en la cadena, y lo agrega si corresponde
 bool validate_block_for_chain(const Block *rBlock, const MPI_Status *status){
   if(valid_new_block(rBlock)){
       // Quizás use last_block, aviso así los demás threads para evitar condiciones de carrera
-    pthread_mutex_lock(&usando_last_block);
+      //pthread_mutex_lock(&usando_last_block);
 
     //Agrego el bloque al diccionario, aunque no
     //necesariamente eso lo agrega a la cadena
@@ -157,47 +177,18 @@ bool validate_block_for_chain(const Block *rBlock, const MPI_Status *status){
         return res;
     }
     
-    pthread_mutex_unlock(&usando_last_block);
+    //pthread_mutex_unlock(&usando_last_block);
   }
 
   printf("[%d] Error duro: Descarto el bloque recibido de %d porque no es válido \n",mpi_rank,status->MPI_SOURCE);
   return false;
 }
 
-/*
-// Comento esto porque me parece que no asegura que siempre sea distinta la forma en que se envian 
-// los bloques
-//Envia el bloque minado a todos los nodos
-void broadcast_block(const Block *block){
-  //No enviar a mí mismo
-  //TODO: Completar
-  MPI_Request requests[total_nodes-1];
-  MPI_Status status[total_nodes-1];
-
-  srand(time(NULL));
-  int destino = rand();
-  int j = 0; //Uso j para recorrer los requests
-
-  //Envio bloque
-  for(int i=0; i<total_nodes; i++){
-    destino = destino % total_nodes;
-    if(destino != mpi_rank){ //Me fijo que no me lo este mandando a mi mismo
-      MPI_Isend((void *)block, 1, *MPI_BLOCK, destino, TAG_NEW_BLOCK, MPI_COMM_WORLD, &requests[j]);
-      cout << mpi_rank << " envio bloque a " << destino << endl;
-      j++;
-    }
-    destino++;
-  }
-  //Espero a que todos reciban para poder continuar
-  MPI_Waitall(total_nodes-1, requests, status);
-}
-*/
-
 // Envio los bloques siguiendo los ranks. Me asegura que para cada programa, la 
 // secuencia es distinta
 void broadcast_block(const Block *block){
     // Avisar que estoy mandando un bloque nuevo
-    pthread_mutex_lock(&mutex);
+    //pthread_mutex_lock(&mutex);
 
     int rank; // mi id en MPI_COMM_WORLD
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -216,7 +207,7 @@ void broadcast_block(const Block *block){
     MPI_Waitall(np-1, requests, status);
 
     // Ya mandé el bloque, suelto el mutex
-    pthread_mutex_unlock(&mutex);
+    //pthread_mutex_unlock(&mutex);
 }
 
 //Proof of work
@@ -228,38 +219,38 @@ void* proof_of_work(void *ptr){
     while(true){
         // No quiero que el otro thread cambie last_block_in_chain mientras intento crear un nuevo bloque que apunta a el?
         // quizás esto bloquea demasiado?
-      pthread_mutex_lock(&usando_last_block);
-      block = *last_block_in_chain;
+        //pthread_mutex_lock(&usando_last_block);
+        block = *last_block_in_chain;
 
-      //Preparar nuevo bloque
-      block.index += 1;
-      block.node_owner_number = mpi_rank;
-      block.difficulty = DEFAULT_DIFFICULTY;
-      block.created_at = static_cast<unsigned long int> (time(NULL));
-      memcpy(block.previous_block_hash,block.block_hash,HASH_SIZE);
+        //Preparar nuevo bloque
+        block.index += 1;
+        block.node_owner_number = mpi_rank;
+        block.difficulty = DEFAULT_DIFFICULTY;
+        block.created_at = static_cast<unsigned long int> (time(NULL));
+        memcpy(block.previous_block_hash,block.block_hash,HASH_SIZE);
 
-      //Agregar un nonce al azar al bloque para intentar resolver el problema
-      gen_random_nonce(block.nonce);
+        //Agregar un nonce al azar al bloque para intentar resolver el problema
+        gen_random_nonce(block.nonce);
 
-      //Hashear el contenido (con el nuevo nonce)
-      block_to_hash(&block,hash_hex_str);
+        //Hashear el contenido (con el nuevo nonce)
+        block_to_hash(&block,hash_hex_str);
 
-      //Contar la cantidad de ceros iniciales (con el nuevo nonce)
-      if(solves_problem(hash_hex_str)){
+        //Contar la cantidad de ceros iniciales (con el nuevo nonce)
+        if(solves_problem(hash_hex_str)){
 
-          //Verifico que no haya cambiado mientras calculaba
-          if(last_block_in_chain->index < block.index){
-            mined_blocks += 1;
-            *last_block_in_chain = block;
-            strcpy(last_block_in_chain->block_hash, hash_hex_str.c_str());
-            node_blocks[hash_hex_str] = *last_block_in_chain;
-            printf("[%d] Agregué un producido con index %d \n",mpi_rank,last_block_in_chain->index);
+            //Verifico que no haya cambiado mientras calculaba
+            if(last_block_in_chain->index < block.index){
+                mined_blocks += 1;
+                *last_block_in_chain = block;
+                strcpy(last_block_in_chain->block_hash, hash_hex_str.c_str());
+                node_blocks[hash_hex_str] = *last_block_in_chain;
+                printf("[%d] Agregué un producido con index %d \n",mpi_rank,last_block_in_chain->index);
 
-            //TODO: Mientras comunico, no responder mensajes de nuevos nodos
-            broadcast_block(last_block_in_chain);
-          }
-      }
-      pthread_mutex_unlock(&usando_last_block);
+                //TODO: Mientras comunico, no responder mensajes de nuevos nodos
+                broadcast_block(last_block_in_chain);
+            }
+        }
+        //pthread_mutex_unlock(&usando_last_block);
     }
 
     return NULL;
@@ -308,12 +299,15 @@ int node(){
   while(true){
 
       //TODO: Recibir mensajes de otros nodos
-      // Aviso que estoy procesando un bloque recivido
-      pthread_mutex_lock(&mutex);
 
       //Antes de esto faltaria chequear que no se este enviando ningun bloque nuevo
       MPI_Irecv(&new_block, 1, *MPI_BLOCK, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &request);
       MPI_Test(&request, &flag, &status);
+
+      // Aviso que estoy procesando un bloque recibido
+      // Según lo que entendí del enunciado, no se puede procesar bloques recibidos y
+      // enviar bloques nuevos de manera concurrente
+      //pthread_mutex_lock(&mutex);
 
       if(flag != 0 && status.MPI_SOURCE != mpi_rank){
 
@@ -326,13 +320,12 @@ int node(){
 
         //TODO: Si es un mensaje de pedido de cadena,
         //responderlo enviando los bloques correspondientes
-        else if(status.MPI_TAG == TAG_CHAIN_HASH){
-          //completar
+        else if(status.MPI_TAG == TAG_CHAIN_HASH) {
         }
       }
 
-      // Terminado de procesar bloque recivido, soltar el mutex
-      pthread_mutex_unlock(&mutex);
+      // Terminado de procesar bloque recibido, soltar el mutex
+      //pthread_mutex_unlock(&mutex);
   }
 
   pthread_attr_destroy(&attr);

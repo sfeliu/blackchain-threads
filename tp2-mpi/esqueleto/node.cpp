@@ -16,8 +16,8 @@ map<string,Block> node_blocks;
 // Lockear este mutes cuando se quiere enviar un bloque nuevo
 // Intentar Unlockear este mutex cuando se necesita procesar un bloque recibido
 // No se me ocurrió un mejor nombre para este mutex...
-//pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-//pthread_mutex_t usando_last_block = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t procesando_bloque = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t usando_last_block = PTHREAD_MUTEX_INITIALIZER;
 
 //Cuando me llega una cadena adelantada, y tengo que pedir los nodos que me faltan
 //Si nos separan más de VALIDATION_BLOCKS bloques de distancia entre las cadenas, se descarta por seguridad
@@ -112,72 +112,78 @@ bool verificar_y_migrar_cadena(const Block *rBlock, const MPI_Status *status){
 
 //Verifica que el bloque tenga que ser incluido en la cadena, y lo agrega si corresponde
 bool validate_block_for_chain(const Block *rBlock, const MPI_Status *status){
-  if(valid_new_block(rBlock)){
+  if(valid_new_block(rBlock)) {
+      // SF: Deprecated (?)
       // Quizás use last_block, aviso así los demás threads para evitar condiciones de carrera
       //pthread_mutex_lock(&usando_last_block);
 
-    //Agrego el bloque al diccionario, aunque no
-    //necesariamente eso lo agrega a la cadena
-    node_blocks[string(rBlock->block_hash)]=*rBlock;
+      //Agrego el bloque al diccionario, aunque no
+      //necesariamente eso lo agrega a la cadena
+      //node_blocks[string(rBlock->block_hash)] = *rBlock;
 
-    //TODO: Si el índice del bloque recibido es 1
-    //y mí último bloque actual tiene índice 0,
-    //entonces lo agrego como nuevo último.
-    if (rBlock->index == 1 && last_block_in_chain->index == 0) {
-        // Bastaría con copiar el puntero?
-        *last_block_in_chain = *rBlock;
-        printf("[%d] Agregado a la lista bloque con index %d enviado por %d \n", mpi_rank, rBlock->index,status->MPI_SOURCE);
-        return true;
-    }
+      //TODO: Si el índice del bloque recibido es 1
+      //y mí último bloque actual tiene índice 0,
+      //entonces lo agrego como nuevo último.
+      if (rBlock->index == 1 && last_block_in_chain->index == 0) {
+          // Bastaría con copiar el puntero?
+          *last_block_in_chain = *rBlock;
+          printf("[%d] Agregado a la lista bloque con index %d enviado por %d \n", mpi_rank, rBlock->index,
+                 status->MPI_SOURCE);
+          return true;
+      }
 
-    //TODO: Si el índice del bloque recibido es
-    //el siguiente a mí último bloque actual,
-    //y el bloque anterior apuntado por el recibido es mí último actual,
-    //entonces lo agrego como nuevo último.
-    if (rBlock->index == last_block_in_chain->index + 1 
+      //TODO: Si el índice del bloque recibido es
+      //el siguiente a mí último bloque actual,
+      //y el bloque anterior apuntado por el recibido es mí último actual,
+      //entonces lo agrego como nuevo último.
+      if (rBlock->index == last_block_in_chain->index + 1
           && rBlock->previous_block_hash == last_block_in_chain->block_hash) {
-        
-        // Bastaría con copiar el puntero?
-        *last_block_in_chain = *rBlock;
-        printf("[%d] Agregado a la lista bloque con index %d enviado por %d \n", mpi_rank, rBlock->index,status->MPI_SOURCE);
-        return true;
-    }
 
-    //TODO: Si el índice del bloque recibido es
-    //el siguiente a mí último bloque actual,
-    //pero el bloque anterior apuntado por el recibido no es mí último actual,
-    //entonces hay una blockchain más larga que la mía.
-    if (rBlock->index == last_block_in_chain->index + 1
+          // Bastaría con copiar el puntero?
+          *last_block_in_chain = *rBlock;
+          printf("[%d] Agregado a la lista bloque con index %d enviado por %d \n", mpi_rank, rBlock->index,
+                 status->MPI_SOURCE);
+          return true;
+      }
+
+      //TODO: Si el índice del bloque recibido es
+      //el siguiente a mí último bloque actual,
+      //pero el bloque anterior apuntado por el recibido no es mí último actual,
+      //entonces hay una blockchain más larga que la mía.
+      if (rBlock->index == last_block_in_chain->index + 1
           && rBlock->previous_block_hash != last_block_in_chain->block_hash) {
-        
-        printf("[%d] Perdí la carrera por uno (%d) contra %d \n", mpi_rank, rBlock->index, status->MPI_SOURCE);
-        bool res = verificar_y_migrar_cadena(rBlock,status);
-        return res;
-    }
 
-    //TODO: Si el índice del bloque recibido es igual al índice de mi último bloque actual,
-    //entonces hay dos posibles forks de la blockchain pero mantengo la mía
-    if (rBlock->index == last_block_in_chain->index) {
-        printf("[%d] Conflicto suave: Conflicto de branch (%d) contra %d \n",mpi_rank,rBlock->index,status->MPI_SOURCE);
-        return false;
-    }
+          printf("[%d] Perdí la carrera por uno (%d) contra %d \n", mpi_rank, rBlock->index, status->MPI_SOURCE);
+          bool res = verificar_y_migrar_cadena(rBlock, status);
+          return res;
+      }
 
-    //TODO: Si el índice del bloque recibido es anterior al índice de mi último bloque actual,
-    //entonces lo descarto porque asumo que mi cadena es la que está quedando preservada.
-    if (rBlock->index < last_block_in_chain->index) {
-        printf("[%d] Conflicto suave: Descarto el bloque (%d vs %d) contra %d \n",mpi_rank,rBlock->index,last_block_in_chain->index, status->MPI_SOURCE);
-        return false;
-    }
+      //TODO: Si el índice del bloque recibido es igual al índice de mi último bloque actual,
+      //entonces hay dos posibles forks de la blockchain pero mantengo la mía
+      if (rBlock->index == last_block_in_chain->index) {
+          printf("[%d] Conflicto suave: Conflicto de branch (%d) contra %d \n", mpi_rank, rBlock->index,
+                 status->MPI_SOURCE);
+          return false;
+      }
 
-    //TODO: Si el índice del bloque recibido está más de una posición adelantada a mi último bloque actual,
-    //entonces me conviene abandonar mi blockchain actual
-    if (rBlock->index > last_block_in_chain->index) {
-        printf("[%d] Perdí la carrera por varios contra %d \n", mpi_rank, status->MPI_SOURCE);
-        bool res = verificar_y_migrar_cadena(rBlock,status);
-        return res;
-    }
-    
-    //pthread_mutex_unlock(&usando_last_block);
+      // SF: No lo encuentro en el enunciado. Si alguien me manda un screenshot lo agradezco.
+      //TODO: Si el índice del bloque recibido es anterior al índice de mi último bloque actual,
+      //entonces lo descarto porque asumo que mi cadena es la que está quedando preservada.
+      if (rBlock->index < last_block_in_chain->index) {
+          printf("[%d] Conflicto suave: Descarto el bloque (%d vs %d) contra %d \n", mpi_rank, rBlock->index,
+                 last_block_in_chain->index, status->MPI_SOURCE);
+          return false;
+      }
+
+      //TODO: Si el índice del bloque recibido está más de una posición adelantada a mi último bloque actual,
+      //entonces me conviene abandonar mi blockchain actual
+      if (rBlock->index > last_block_in_chain->index) {
+          printf("[%d] Perdí la carrera por varios contra %d \n", mpi_rank, status->MPI_SOURCE);
+          bool res = verificar_y_migrar_cadena(rBlock, status);
+          return res;
+      }
+
+      //pthread_mutex_unlock(&usando_last_block);
   }
 
   printf("[%d] Error duro: Descarto el bloque recibido de %d porque no es válido \n",mpi_rank,status->MPI_SOURCE);
@@ -188,7 +194,8 @@ bool validate_block_for_chain(const Block *rBlock, const MPI_Status *status){
 // secuencia es distinta
 void broadcast_block(const Block *block){
     // Avisar que estoy mandando un bloque nuevo
-    //pthread_mutex_lock(&mutex);
+    // pthread_mutex_lock(&procesando_bloque);
+    // SF: Lo puse fuera, para que no haya condiciones de carrera
 
     int rank; // mi id en MPI_COMM_WORLD
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -207,7 +214,7 @@ void broadcast_block(const Block *block){
     MPI_Waitall(np-1, requests, status);
 
     // Ya mandé el bloque, suelto el mutex
-    //pthread_mutex_unlock(&mutex);
+    pthread_mutex_unlock(&procesando_bloque);
 }
 
 //Proof of work
@@ -219,6 +226,7 @@ void* proof_of_work(void *ptr){
     while(true){
         // No quiero que el otro thread cambie last_block_in_chain mientras intento crear un nuevo bloque que apunta a el?
         // quizás esto bloquea demasiado?
+        // SF: Creo que esto lo resuelve el mutex procesando_bloque
         //pthread_mutex_lock(&usando_last_block);
         block = *last_block_in_chain;
 
@@ -229,28 +237,40 @@ void* proof_of_work(void *ptr){
         block.created_at = static_cast<unsigned long int> (time(NULL));
         memcpy(block.previous_block_hash,block.block_hash,HASH_SIZE);
 
+        // SF: Esto no deberia hacerse hasta que se logre el resultado? de la siguiente manera?
+
         //Agregar un nonce al azar al bloque para intentar resolver el problema
         gen_random_nonce(block.nonce);
 
         //Hashear el contenido (con el nuevo nonce)
         block_to_hash(&block,hash_hex_str);
 
-        //Contar la cantidad de ceros iniciales (con el nuevo nonce)
-        if(solves_problem(hash_hex_str)){
-
-            //Verifico que no haya cambiado mientras calculaba
-            if(last_block_in_chain->index < block.index){
-                mined_blocks += 1;
-                *last_block_in_chain = block;
-                strcpy(last_block_in_chain->block_hash, hash_hex_str.c_str());
-                node_blocks[hash_hex_str] = *last_block_in_chain;
-                printf("[%d] Agregué un producido con index %d \n",mpi_rank,last_block_in_chain->index);
-
-                //TODO: Mientras comunico, no responder mensajes de nuevos nodos
-                broadcast_block(last_block_in_chain);
-            }
+        // SF: De esta manera.
+        while(solves_problem(hash_hex_str)){
+            gen_random_nonce(block.nonce);
+            block_to_hash(&block,hash_hex_str);
         }
+
+        // Avisar que voy a agregar un bloque, no recibir mensajes.
+        pthread_mutex_lock(&procesando_bloque);
+
+        //Verifico que no haya cambiado mientras calculaba/esperaba el mensaje
+        if(last_block_in_chain->index < block.index) {
+            mined_blocks += 1;
+            *last_block_in_chain = block;
+            strcpy(last_block_in_chain->block_hash, hash_hex_str.c_str());
+            node_blocks[hash_hex_str] = *last_block_in_chain;
+            printf("[%d] Agregué un producido con index %d \n", mpi_rank, last_block_in_chain->index);
+
+            //TODO: Mientras comunico, no responder mensajes de nuevos nodos
+             broadcast_block(last_block_in_chain);
+            }
         //pthread_mutex_unlock(&usando_last_block);
+
+        // El loop termina al obtener una blockchain de tamaño maximo.
+        if(last_block_in_chain->index == MAX_BLOCKS){
+            break;
+        }
     }
 
     return NULL;
@@ -307,7 +327,8 @@ int node(){
       // Aviso que estoy procesando un bloque recibido
       // Según lo que entendí del enunciado, no se puede procesar bloques recibidos y
       // enviar bloques nuevos de manera concurrente
-      //pthread_mutex_lock(&mutex);
+      // SF: Correcto
+      pthread_mutex_lock(&procesando_bloque);
 
       if(flag != 0 && status.MPI_SOURCE != mpi_rank){
 
@@ -325,7 +346,12 @@ int node(){
       }
 
       // Terminado de procesar bloque recibido, soltar el mutex
-      //pthread_mutex_unlock(&mutex);
+      pthread_mutex_unlock(&procesando_bloque);
+
+      // El loop termina al obtener una blockchain de tamaño maximo.
+      if(last_block_in_chain->index == MAX_BLOCKS){
+          break;
+      }
   }
 
   pthread_attr_destroy(&attr);

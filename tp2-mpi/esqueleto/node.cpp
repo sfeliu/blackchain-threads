@@ -276,6 +276,22 @@ void* proof_of_work(void *ptr){
     return NULL;
 }
 
+void enviar_bloques(Block *rBlock, const MPI_Status *status){
+    Block *blockchain = new Block[VALIDATION_BLOCKS];
+    Block *lastBlock = rBlock;
+
+    int i = 0;
+    while(i < VALIDATION_BLOCKS){
+        if(i > 0 && lastBlock->index == 0)break;
+        blockchain[i] = *lastBlock;
+        lastBlock = &node_blocks.find(lastBlock->previous_block_hash)->second;
+        i++;
+    }
+
+    MPI_Send((void *) blockchain, i, *MPI_BLOCK, status->MPI_SOURCE, TAG_CHAIN_RESPONSE, MPI_COMM_WORLD);
+
+    delete []blockchain;
+}
 
 int node(){
 
@@ -342,6 +358,7 @@ int node(){
         //TODO: Si es un mensaje de pedido de cadena,
         //responderlo enviando los bloques correspondientes
         else if(status.MPI_TAG == TAG_CHAIN_HASH) {
+            enviar_bloques(&new_block, &status);
         }
       }
 

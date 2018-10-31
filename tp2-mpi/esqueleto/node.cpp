@@ -13,7 +13,7 @@ int total_nodes, mpi_rank;
 Block *last_block_in_chain;
 map<string,Block> node_blocks;
 
-// Lockear este mutes cuando se quiere enviar un bloque nuevo
+// Lockear este mutex cuando se quiere enviar un bloque nuevo
 // Intentar Unlockear este mutex cuando se necesita procesar un bloque recibido
 // No se me ocurrió un mejor nombre para este mutex...
 pthread_mutex_t procesando_bloque = PTHREAD_MUTEX_INITIALIZER;
@@ -212,9 +212,6 @@ void broadcast_block(const Block *block){
         i++;
     }
     MPI_Waitall(np-1, requests, status);
-
-    // Ya mandé el bloque, suelto el mutex
-    pthread_mutex_unlock(&procesando_bloque);
 }
 
 //Proof of work
@@ -265,7 +262,7 @@ void* proof_of_work(void *ptr){
             //TODO: Mientras comunico, no responder mensajes de nuevos nodos
              broadcast_block(last_block_in_chain);
             }
-        //pthread_mutex_unlock(&usando_last_block);
+        pthread_mutex_unlock(&procesando_bloque);
 
         // El loop termina al obtener una blockchain de tamaño maximo.
         if(last_block_in_chain->index == MAX_BLOCKS){

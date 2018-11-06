@@ -373,14 +373,14 @@ int node(){
           //validate_block_for_chain con el bloque recibido y el estado de MPI
           // Recieve especifico por tag
           if(status.MPI_TAG == TAG_NEW_BLOCK) {
-              MPI_Recv(new_block, 1, *MPI_BLOCK, status.MPI_SOURCE, TAG_NEW_BLOCK, MPI_COMM_WORLD, &status);
+              MPI_Irecv(new_block, 1, *MPI_BLOCK, status.MPI_SOURCE, TAG_NEW_BLOCK, MPI_COMM_WORLD, &status);
               validate_block_for_chain(new_block, &status);
           }
 
             //TODO: Si es un mensaje de pedido de cadena,
             //responderlo enviando los bloques correspondientes
           else if(status.MPI_TAG == TAG_CHAIN_HASH) {
-              MPI_Recv(block_hash, 1, MPI_CHAR, status.MPI_SOURCE, TAG_CHAIN_HASH, MPI_COMM_WORLD, &status);
+              MPI_Irecv(block_hash, 1, MPI_CHAR, status.MPI_SOURCE, TAG_CHAIN_HASH, MPI_COMM_WORLD, &status);
               enviar_bloques(block_hash, &status);
           }
       }

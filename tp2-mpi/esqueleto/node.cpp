@@ -24,33 +24,23 @@ pthread_mutex_t usando_last_block = PTHREAD_MUTEX_INITIALIZER;
 bool verificar_y_migrar_cadena(const Block *rBlock, const MPI_Status *status){
     MPI_Request request;
     MPI_Status local_status{};
-    
+    Block *blockchain = new Block[VALIDATION_BLOCKS];
+
     //TODO: Enviar mensaje TAG_CHAIN_HASH
-    printf("[%d] Pido cadena a %d, con el hash %s\n", mpi_rank, rBlock->index, rBlock->block_hash);
-    MPI_Isend((void *)rBlock->block_hash,
-              HASH_SIZE,
-              MPI_CHAR,
-              status->MPI_SOURCE,
-              TAG_CHAIN_HASH,
-              MPI_COMM_WORLD,
-              &request);
+    printf("[%d] Pido cadena a %d, con indice %d y el hash %s\n", mpi_rank, status->MPI_SOURCE, rBlock->index, rBlock->block_hash);
+    //MPI_Send(rBlock->block_hash, HASH_SIZE, MPI_CHAR, status->MPI_SOURCE, TAG_CHAIN_HASH, MPI_COMM_WORLD);
+    MPI_Isend((void *)rBlock->block_hash, HASH_SIZE, MPI_CHAR, status->MPI_SOURCE, TAG_CHAIN_HASH, MPI_COMM_WORLD, &request);
 
     MPI_Wait(&request, &local_status);
 
-    Block *blockchain = new Block[VALIDATION_BLOCKS];
 
     //TODO: Recibir mensaje TAG_CHAIN_RESPONSE
-    printf("[%d] Recibo bloques de %d\n", mpi_rank, rBlock->index);
-    MPI_Recv(blockchain,
-             VALIDATION_BLOCKS,
-             *MPI_BLOCK,
-             status->MPI_SOURCE,
-             TAG_CHAIN_RESPONSE,
-             MPI_COMM_WORLD,
+    MPI_Recv(blockchain, VALIDATION_BLOCKS, *MPI_BLOCK, status->MPI_SOURCE, TAG_CHAIN_RESPONSE, MPI_COMM_WORLD,
              &local_status);
+    printf("[%d] Recibo bloques de %d\n", mpi_rank, status->MPI_SOURCE);
     int bloques_recibidos;
     MPI_Get_count(&local_status, *MPI_BLOCK, &bloques_recibidos);
-    
+
     //TODO: Verificar que los bloques recibidos
     //sean válidos y se puedan acoplar a la cadena
     // Verifico que el primero en lacadena recibida es el rBlock (esto no me queda claro del enunciado, preguntar!)
@@ -160,7 +150,7 @@ bool validate_block_for_chain(const Block *rBlock, const MPI_Status *status){
       if (rBlock->index == last_block_in_chain->index + 1
           && string(rBlock->previous_block_hash) != string(last_block_in_chain->block_hash)) {
 
-          printf("[%d] Perdí la carrera por uno (%d) contra %d \n", mpi_rank, rBlock->index, status->MPI_SOURCE);
+          printf("[%d] Conflicto Fuerte: Perdí la carrera por uno (%d) contra %d \n", mpi_rank, rBlock->index, status->MPI_SOURCE);
           bool res = verificar_y_migrar_cadena(rBlock, status);
 
           pthread_mutex_unlock(&usando_last_block);
@@ -191,7 +181,7 @@ bool validate_block_for_chain(const Block *rBlock, const MPI_Status *status){
       //TODO: Si el índice del bloque recibido está más de una posición adelantada a mi último bloque actual,
       //entonces me conviene abandonar mi blockchain actual
       if (rBlock->index > last_block_in_chain->index) {
-          printf("[%d] Perdí la carrera por varios contra %d \n", mpi_rank, status->MPI_SOURCE);
+          printf("[%d] Conflicto Fuerte: Perdí la carrera por %d contra %d \n", mpi_rank, rBlock->index - last_block_in_chain->index, status->MPI_SOURCE);
           bool res = verificar_y_migrar_cadena(rBlock, status);
 
           pthread_mutex_unlock(&usando_last_block);
@@ -350,6 +340,7 @@ int node(){
   //Esto lo creo para el mensaje entrante
   int flag;
   MPI_Status status;
+  MPI_Request request;
 
   //Esto es para el bloque entrante
   auto new_block = new Block;
@@ -373,14 +364,19 @@ int node(){
           //validate_block_for_chain con el bloque recibido y el estado de MPI
           // Recieve especifico por tag
           if(status.MPI_TAG == TAG_NEW_BLOCK) {
-              MPI_Irecv(new_block, 1, *MPI_BLOCK, status.MPI_SOURCE, TAG_NEW_BLOCK, MPI_COMM_WORLD, &status);
+              //MPI_Recv(new_block, 1, *MPI_BLOCK, status.MPI_SOURCE, TAG_NEW_BLOCK, MPI_COMM_WORLD, &status);
+              MPI_Irecv(new_block, 1, *MPI_BLOCK, status.MPI_SOURCE, TAG_NEW_BLOCK, MPI_COMM_WORLD, &request);
+              MPI_Wait(&request, &status);
               validate_block_for_chain(new_block, &status);
           }
 
             //TODO: Si es un mensaje de pedido de cadena,
             //responderlo enviando los bloques correspondientes
           else if(status.MPI_TAG == TAG_CHAIN_HASH) {
-              MPI_Irecv(block_hash, 1, MPI_CHAR, status.MPI_SOURCE, TAG_CHAIN_HASH, MPI_COMM_WORLD, &status);
+              printf("[%d] Recibo pedido de envio de cadena para %d\n", mpi_rank, status.MPI_SOURCE);
+              //MPI_Recv(block_hash, HASH_SIZE, MPI_CHAR, status.MPI_SOURCE, TAG_CHAIN_HASH, MPI_COMM_WORLD, &status);
+              MPI_Irecv(block_hash, HASH_SIZE, MPI_CHAR, status.MPI_SOURCE, TAG_CHAIN_HASH, MPI_COMM_WORLD, &request);
+              MPI_Wait(&request, &status);
               enviar_bloques(block_hash, &status);
           }
       }

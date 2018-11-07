@@ -274,14 +274,14 @@ void* proof_of_work(void *ptr){
 
                 //TODO: Mientras comunico, no responder mensajes de nuevos nodos
                 broadcast_block(last_block_in_chain);
-
-                // El loop termina al obtener una blockchain de tamaño maximo.
-                if(last_block_in_chain->index == MAX_BLOCKS){
-                    MPI_Abort(MPI_COMM_WORLD, MPI_SUCCESS);
-                    break;
-                }
             }
             pthread_mutex_unlock(&usando_last_block);
+
+            // El loop termina al obtener una blockchain de tamaño maximo.
+            if(last_block_in_chain->index == MAX_BLOCKS){
+                MPI_Abort(MPI_COMM_WORLD, MPI_SUCCESS);
+                break;
+            }
         }
     }
 
